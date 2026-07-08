@@ -95,9 +95,9 @@
   .bar { width: 26px; border-radius: 6px; transition: height 0.3s; }
   .chart-lbl { font-size: 11px; color: var(--dim); }
 
-  .insight-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; background: var(--panel); border: 1px solid var(--panel-b); border-radius: 14px; padding: 14px 10px; }
+  .insight-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; background: var(--panel); border: 1px solid var(--panel-b); border-radius: 14px; padding: 14px 8px; }
   .stat { text-align: center; }
-  .stat-val { font-size: 18px; font-weight: 700; font-family: 'Fredoka', sans-serif; }
+  .stat-val { font-size: 15px; font-weight: 700; font-family: 'Fredoka', sans-serif; }
   .stat-val.good { color: var(--green); } .stat-val.bad { color: var(--red2); }
   .stat-lbl { font-size: 11px; color: var(--dim); }
 
@@ -289,7 +289,7 @@ function deleteEvent(id) {
 let syncTimer = null;
 function scheduleSync() { if (!settings.supabaseUrl) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 1500); }
 
-async function syncNow() {
+async function syncNow(quiet) {
   if (!settings.supabaseUrl || !settings.supabaseKey) { syncState = { status: "off", detail: "" }; renderIfSettings(); return; }
   const base = settings.supabaseUrl.replace(/\/+$/, "");
   const headers = {
@@ -298,7 +298,7 @@ async function syncNow() {
     "Content-Type": "application/json",
     Prefer: "resolution=merge-duplicates",
   };
-  syncState = { status: "working", detail: "Syncing…" }; renderIfSettings();
+  if (!quiet) { syncState = { status: "working", detail: "Syncing…" }; renderIfSettings(); }
   try {
     // pull
     const res = await fetch(base + "/rest/v1/ralph_events?select=id,mod,payload", { headers });
@@ -325,7 +325,9 @@ async function syncNow() {
     }
     if (changedLocal) saveEvents();
     syncState = { status: "ok", detail: "Synced " + fmtTime(Date.now()) + (toPush.length ? " · sent " + toPush.length : "") };
-    render();
+    // quiet background syncs only redraw when something changed, and never while a sheet is open
+    if ((!quiet || changedLocal) && !$overlay.firstChild) render();
+    else renderIfSettings();
   } catch (err) {
     syncState = { status: "error", detail: "Sync failed: " + err.message };
     renderIfSettings();
@@ -364,6 +366,29 @@ function insight(list) {
   });
   const avgWin = windows.length ? windows.reduce((a, b) => a + b, 0) / windows.length : null;
   return { wees, poos, out, accidents, food, avgWin };
+}
+
+function sleepIntervals() {
+  const naps = live().filter(e => e.type === "napStart" || e.type === "napEnd").sort((a, b) => a.ts - b.ts);
+  const out = [];
+  let open = null;
+  for (const e of naps) {
+    if (e.type === "napStart") { if (open === null) open = e.ts; }
+    else { if (open !== null) { out.push([open, e.ts]); open = null; } }
+  }
+  if (open !== null) out.push([open, Date.now()]);
+  return out;
+}
+function sleepForDay(k) {
+  const [y, m, d] = k.split("-").map(Number);
+  const start = new Date(y, m - 1, d).getTime();
+  const end = start + 86400000;
+  let total = 0;
+  for (const [a, b] of sleepIntervals()) {
+    const s = Math.max(a, start), e = Math.min(b, end);
+    if (e > s) total += e - s;
+  }
+  return total;
 }
 
 function prettyDay(k) {
@@ -478,6 +503,7 @@ function renderNow() {
     '<circle cx="110" cy="110" r="' + R + '" stroke="' + ringColor + '" stroke-width="14" fill="none" stroke-linecap="round" stroke-dasharray="' + CIRC + '" stroke-dashoffset="' + offset + '" transform="rotate(-90 110 110)" style="transition:stroke-dashoffset 0.6s ease"/>' +
     '</svg><div class="hero-inner">' + inner + "</div></div>" +
     '<div class="strip" style="border-color:' + (weeDue ? "#ff7a6e55" : "#2a3248") + '"><span>💧 Last wee: <b class="' + (weeDue ? "due" : "") + '">' + (d.lastWee ? fmtDur(weeAgo) + " ago" : "not logged") + "</b></span><span>💩 " + (d.lastPoo ? fmtDur(d.now - d.lastPoo.ts) + " ago" : "—") + "</span></div>" +
+    '<div class="strip"><span>😴 Slept today: <b>' + fmtDur(sleepForDay(dayKey(d.now))) + "</b></span><span style=\"color:var(--dim)\">aiming ~18–20h at 8wks</span></div>" +
     '<button class="sleep-btn' + (d.asleep ? " asleep" : "") + '" onclick="addEvent({type:\'' + (d.asleep ? "napEnd" : "napStart") + "'})\">" + (d.asleep ? "☀️ Woke up" : "😴 Nap started") + "</button>" +
     '<div class="grid-label">Toilet — one tap</div>' +
     '<div class="grid2">' +
@@ -525,8 +551,9 @@ function renderInsights() {
       const pooRate = i.poos.length ? Math.round((i.out(i.poos) / i.poos.length) * 100) : null;
       const stat = (lbl, val, good) => '<div class="stat"><div class="stat-val ' + (good === true ? "good" : good === false ? "bad" : "") + '">' + val + '</div><div class="stat-lbl">' + lbl + "</div></div>";
       return '<div class="day-header">' + prettyDay(k) + '</div><div class="insight-row">' +
-        stat("Wees outside", weeRate === null ? "—" : weeRate + "%", weeRate === null ? null : weeRate >= 80) +
-        stat("Poos outside", pooRate === null ? "—" : pooRate + "%", pooRate === null ? null : pooRate >= 80) +
+        stat("Sleep", fmtDur(sleepForDay(k)), sleepForDay(k) >= 16 * 3600000) +
+        stat("Wees out", weeRate === null ? "—" : weeRate + "%", weeRate === null ? null : weeRate >= 80) +
+        stat("Poos out", pooRate === null ? "—" : pooRate + "%", pooRate === null ? null : pooRate >= 80) +
         stat("Food", i.food + "g", i.food >= settings.foodTargetG) +
         stat("Avg awake", i.avgWin ? fmtDur(i.avgWin) : "—", i.avgWin ? i.avgWin <= settings.awakeWindowMin * 60000 * 1.2 : null) +
         "</div>";
@@ -579,6 +606,9 @@ load();
 render();
 setInterval(() => { if (tab === "now") render(); else $clock.textContent = fmtTime(Date.now()); }, 15000);
 if (settings.supabaseUrl) syncNow();
+// auto-pull: every 60s while visible, and whenever the app returns to the foreground
+setInterval(() => { if (settings.supabaseUrl && !document.hidden) syncNow(true); }, 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && settings.supabaseUrl) syncNow(true); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(() => {});
 </script>
 </body>
