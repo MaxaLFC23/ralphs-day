@@ -108,12 +108,19 @@
   .stepper .val { min-width: 44px; text-align: center; font-family: 'Fredoka', sans-serif; font-weight: 600; }
   .text-setting input { width: 100%; background: var(--bg); border: 1px solid var(--panel-b2); border-radius: 10px; color: var(--ink); padding: 10px; font-size: 13px; margin-top: 8px; font-family: monospace; }
   .sync-status { font-size: 12px; margin-top: 6px; }
+
+  /* night mode: dimmer, bigger targets for 3am one-handed use */
+  body.night { --bg: #0a0d14; --panel: #10141f; --ink: #c9c2b4; --amber: #d9a854; }
+  body.night .big-btn { padding: 24px 8px; font-size: 15px; }
+  body.night .sleep-btn { padding: 24px 0; }
+  body.night .hero, body.night .grid-label { opacity: 0.75; }
+
 </style>
 </head>
 <body>
 <header>
   <div class="title">🐾 Ralph's Day</div>
-  <div style="display:flex;align-items:center;gap:8px"><span id="sync-dot" onclick="tab='settings';render()" style="width:10px;height:10px;border-radius:50%;background:#555;display:inline-block;cursor:pointer"></span><span id="clock"></span></div>
+  <div style="display:flex;align-items:center;gap:10px"><span id="night-btn" onclick="settings.night=!settings.night;saveSettings();applyNight();render()" style="cursor:pointer;font-size:16px">🌙</span><span id="sync-dot" onclick="tab='settings';render()" style="width:10px;height:10px;border-radius:50%;background:#555;display:inline-block;cursor:pointer"></span><span id="clock"></span></div>
 </header>
 <main id="main"></main>
 <nav id="nav"></nav>
@@ -139,7 +146,7 @@ const FLAGS = [
   { key: "crying", label: "Crying", icon: "😿" },
 ];
 
-const DEFAULT_SETTINGS = { awakeWindowMin: 50, weeWarnMin: 60, foodTargetG: 150, mealSizeG: 50, supabaseUrl: "", supabaseKey: "" };
+const DEFAULT_SETTINGS = { awakeWindowMin: 50, weeWarnMin: 60, foodTargetG: 150, mealSizeG: 50, supabaseUrl: "", supabaseKey: "", dob: "", night: false };
 
 // Web Push (public key — safe to embed; the private half lives in Supabase secrets)
 const VAPID_PUBLIC = "BBZzXpYh6a2S9l14vvl_YubQWJSu5O0Z4TTruHJ8Gw8MlcVn8ehjnBhwjJEH7LZKvjX2Km09B3WVTWW7HpknPO0";
@@ -285,11 +292,12 @@ const live = () => events.filter(e => !e.deleted);
 
 function addEvent(ev) {
   const e = { id: uid(), ts: Date.now(), mod: Date.now(), dev: deviceId, ...ev };
+  const dupe = live().some(x => x.id !== e.id && x.type === e.type && (x.where || "") === (e.where || "") && (x.flag || "") === (e.flag || "") && Math.abs(x.ts - e.ts) < 2 * 60000);
   events.push(e);
   saveEvents();
   render();
   const meta = eventMeta(e);
-  toast(meta.icon + " " + meta.label + " · " + fmtTime(e.ts), e.id);
+  toast((dupe ? "⚠️ Possible duplicate: " : "") + meta.icon + " " + meta.label + " · " + fmtTime(e.ts), e.id);
   scheduleSync();
 }
 function shiftEvent(id, deltaMin) {
@@ -405,6 +413,28 @@ function sleepForDay(k) {
     if (e > s) total += e - s;
   }
   return total;
+}
+
+function ageWeeks() {
+  if (!settings.dob) return null;
+  const [y, m, d] = settings.dob.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return Math.floor((Date.now() - new Date(y, m - 1, d).getTime()) / (7 * 86400000));
+}
+function windowBand(w) {
+  if (w < 9) return [40, 60];
+  if (w < 11) return [50, 70];
+  if (w < 13) return [60, 85];
+  if (w < 17) return [75, 110];
+  if (w < 21) return [90, 130];
+  return [110, 180];
+}
+function sleepTargetText(w) {
+  if (w === null) return "~18–20h at 8wks";
+  if (w < 12) return "~18–20h at " + w + "wks";
+  if (w < 16) return "~16–18h at " + w + "wks";
+  if (w < 24) return "~14–16h at " + w + "wks";
+  return "~12–14h at " + w + "wks";
 }
 
 function avgAwakeMin7d() {
@@ -563,7 +593,7 @@ function renderNow() {
     '<circle cx="110" cy="110" r="' + R + '" stroke="' + ringColor + '" stroke-width="14" fill="none" stroke-linecap="round" stroke-dasharray="' + CIRC + '" stroke-dashoffset="' + offset + '" transform="rotate(-90 110 110)" style="transition:stroke-dashoffset 0.6s ease"/>' +
     '</svg><div class="hero-inner">' + inner + "</div></div>" +
     '<div class="strip" style="border-color:' + (weeDue ? "#ff7a6e55" : "#2a3248") + '"><span>💧 Last wee: <b class="' + (weeDue ? "due" : "") + '">' + (d.lastWee ? fmtDur(weeAgo) + " ago" : "not logged") + "</b></span><span>💩 " + (d.lastPoo ? fmtDur(d.now - d.lastPoo.ts) + " ago" : "—") + "</span></div>" +
-    '<div class="strip"><span>😴 Slept today: <b>' + fmtDur(sleepForDay(dayKey(d.now))) + "</b></span><span style=\"color:var(--dim)\">aiming ~18–20h at 8wks</span></div>" +
+    '<div class="strip"><span>😴 Slept today: <b>' + fmtDur(sleepForDay(dayKey(d.now))) + "</b></span><span style=\"color:var(--dim)\">aiming " + sleepTargetText(ageWeeks()) + "</span></div>" +
     '<button class="sleep-btn' + (d.asleep ? " asleep" : "") + '" onclick="addEvent({type:\'' + (d.asleep ? "napEnd" : "napStart") + "'})\">" + (d.asleep ? "☀️ Woke up" : "😴 Nap started") + "</button>" +
     '<div class="grid-label">Toilet — one tap</div>' +
     '<div class="grid2">' +
@@ -699,10 +729,23 @@ function renderSettings() {
     (function () {
       const avg = avgAwakeMin7d();
       if (avg === null) return "";
-      const rounded = Math.round(avg / 5) * 5;
-      const diff = rounded - settings.awakeWindowMin;
-      let inner = "📊 His real windows average <b>" + avg + " mins</b> over the last 7 days.";
-      if (Math.abs(diff) >= 10) inner += ' <button onclick="settings.awakeWindowMin=' + rounded + ';saveSettings();render()" style="background:#31406b;border:none;border-radius:10px;color:var(--ink);font-weight:600;padding:4px 12px;margin-left:6px;cursor:pointer">Set to ' + rounded + "</button>";
+      const w = ageWeeks();
+      const band = w !== null ? windowBand(w) : null;
+      let suggestion = Math.round(avg / 5) * 5;
+      let bandNote = "";
+      if (band) {
+        suggestion = Math.min(band[1], Math.max(band[0], suggestion));
+        bandNote = " Healthy range at " + w + " weeks: " + band[0] + "–" + band[1] + " mins.";
+      }
+      const zoomies7d = live().filter(e => e.type === "flag" && e.flag === "zoomies" && e.ts > Date.now() - 7 * 86400000).length;
+      const frazzled = zoomies7d >= 4;
+      let inner = "📊 His real windows average <b>" + avg + " mins</b> over the last 7 days." + bandNote;
+      if (frazzled) {
+        inner += ' <span style="color:#f0b23e">High-zoomie week (' + zoomies7d + ' 🌀) — averages likely reflect overtiredness, so no suggestion. Shorter windows are the usual fix.</span>';
+      } else if (Math.abs(suggestion - settings.awakeWindowMin) >= 10) {
+        inner += ' <button onclick="settings.awakeWindowMin=' + suggestion + ';saveSettings();render()" style="background:#31406b;border:none;border-radius:10px;color:var(--ink);font-weight:600;padding:4px 12px;margin-left:6px;cursor:pointer">Set to ' + suggestion + "</button>";
+      }
+      if (w === null) inner += ' <span style="color:var(--dim)">Add his date of birth below for age-aware advice.</span>';
       return '<div style="background:var(--panel);border:1px solid var(--panel-b);border-radius:14px;padding:12px 14px;margin:-4px 0 10px;font-size:13px;line-height:1.6;color:var(--dim)">' + inner + "</div>";
     })() +
     stepperSetting("Wee reminder (mins)", "Highlight when it's been this long", "weeWarnMin", 5, 15, 240) +
@@ -716,6 +759,8 @@ function renderSettings() {
     '<button class="sheet-btn" style="margin-top:10px" onclick="saveSync()">Save & sync now</button>' +
     '<div class="sync-status" style="color:' + syncColor + '">' + (syncState.detail || (settings.supabaseUrl ? "Configured" : "Not configured — data stays on this phone")) + "</div>" +
     "</div>" +
+    '<div class="setting"><div><div class="setting-name">Ralph\'s date of birth</div><div class="setting-hint">' + (ageWeeks() !== null ? "Currently " + ageWeeks() + " weeks old — targets adjust as he grows" : "Powers age-aware sleep targets and window advice") + '</div></div>' +
+    '<input type="date" value="' + esc(settings.dob || "") + '" onchange="settings.dob=this.value;saveSettings();render()" style="background:var(--bg);border:1px solid var(--panel-b2);border-radius:10px;color:var(--ink);padding:8px;font-family:inherit"></div>' +
     '<div class="setting" style="display:block">' +
     '<div class="setting-name">Notifications</div>' +
     '<div class="setting-hint">Nap/wee reminders and "logged" alerts from the other phone. Needs shared sync configured, and on iPhone must be enabled from the Home Screen app (not Safari).</div>' +
@@ -728,7 +773,13 @@ function renderSettings() {
 }
 
 // ===================== boot =====================
+function applyNight() {
+  document.body.classList.toggle("night", !!settings.night);
+  const b = document.getElementById("night-btn");
+  if (b) b.style.opacity = settings.night ? "1" : "0.5";
+}
 load();
+applyNight();
 render();
 setInterval(() => { if (tab === "now") render(); else $clock.textContent = fmtTime(Date.now()); }, 15000);
 if (settings.supabaseUrl) syncNow();
