@@ -113,7 +113,7 @@
 <body>
 <header>
   <div class="title">🐾 Ralph's Day</div>
-  <div id="clock"></div>
+  <div style="display:flex;align-items:center;gap:8px"><span id="sync-dot" onclick="tab='settings';render()" style="width:10px;height:10px;border-radius:50%;background:#555;display:inline-block;cursor:pointer"></span><span id="clock"></span></div>
 </header>
 <main id="main"></main>
 <nav id="nav"></nav>
@@ -289,7 +289,7 @@ function addEvent(ev) {
   saveEvents();
   render();
   const meta = eventMeta(e);
-  toast(meta.icon + " " + meta.label + " · " + fmtTime(e.ts));
+  toast(meta.icon + " " + meta.label + " · " + fmtTime(e.ts), e.id);
   scheduleSync();
 }
 function shiftEvent(id, deltaMin) {
@@ -445,11 +445,30 @@ const $overlay = document.getElementById("overlay");
 const $clock = document.getElementById("clock");
 
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, undoId) {
   const slot = document.getElementById("toast-slot");
-  slot.innerHTML = '<div class="toast">' + esc(msg) + "</div>";
+  slot.innerHTML = '<div class="toast">' + esc(msg) +
+    (undoId ? ' &nbsp;<button onclick="undoEvent(\'' + undoId + '\')" style="background:none;border:1px solid #6b7bb0;border-radius:14px;color:#ffc86b;font-weight:700;padding:2px 12px;margin-left:6px;cursor:pointer">Undo</button>' : "") +
+    "</div>";
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { slot.innerHTML = ""; }, 2400);
+  toastTimer = setTimeout(() => { slot.innerHTML = ""; }, undoId ? 5000 : 2400);
+}
+function undoEvent(id) {
+  deleteEvent(id);
+  render();
+  toast("↩️ Undone");
+}
+function updateSyncDot() {
+  const dot = document.getElementById("sync-dot");
+  if (!dot) return;
+  let c = "#f0b23e", t = "Sync not configured — data stays on this device";
+  if (settings.supabaseUrl) {
+    if (syncState.status === "error") { c = "#ff7a6e"; t = "Sync failing — tap for details"; }
+    else if (syncState.status === "ok") { c = "#5fbf82"; t = "Synced"; }
+    else { c = "#7fb4ff"; t = "Syncing…"; }
+  }
+  dot.style.background = c;
+  dot.title = t;
 }
 
 function closeSheet() { $overlay.innerHTML = ""; }
@@ -485,6 +504,7 @@ function openEdit(id) {
 
 function render() {
   $clock.textContent = fmtTime(Date.now());
+  updateSyncDot();
   $nav.innerHTML = [["now", "🐶", "Now"], ["log", "📋", "Log"], ["insights", "📈", "Insights"], ["settings", "⚙️", "Set-up"]]
     .map(([k, icon, lbl]) =>
       '<button class="' + (tab === k ? "active" : "") + '" onclick="tab=\'' + k + '\';render()"><span class="ico">' + icon + '</span><span class="lbl">' + lbl + "</span></button>"
@@ -557,7 +577,27 @@ function renderInsights() {
   if (!keysAsc.length) { $main.innerHTML = '<div class="empty">Insights appear once you\'ve logged a day or two.</div>'; return; }
   const rows = keysAsc.map(k => ({ k, i: insight(days[k]) }));
   const maxAcc = Math.max(1, ...rows.map(r => r.i.accidents));
+  // accident context: last 7 days, inside accidents near a zoomies/visitors flag
+  const weekAgo = Date.now() - 7 * 86400000;
+  const recent = live().filter(e => e.ts > weekAgo);
+  const accs = recent.filter(e => (e.type === "wee" || e.type === "poo") && e.where === "inside");
+  const ctxFlags = recent.filter(e => e.type === "flag" && (e.flag === "zoomies" || e.flag === "visitors"));
+  const near = a => ctxFlags.filter(f => Math.abs(a.ts - f.ts) <= 30 * 60000);
+  const linked = accs.filter(a => near(a).length > 0);
+  const byFlag = {};
+  linked.forEach(a => near(a).forEach(f => { byFlag[f.flag] = (byFlag[f.flag] || 0) + 1; }));
+  let contextCard = "";
+  if (accs.length > 0) {
+    const parts = Object.entries(byFlag).map(([f, n]) => (f === "zoomies" ? "🌀 zoomies" : "🚪 visitors") + " (" + n + ")").join(", ");
+    contextCard = '<div class="day-header">Accident context — last 7 days</div>' +
+      '<div style="background:var(--panel);border:1px solid var(--panel-b);border-radius:14px;padding:14px;font-size:14px;line-height:1.5">' +
+      "<b>" + linked.length + " of " + accs.length + "</b> inside accidents happened within 30 mins of " + (parts || "a logged trigger") + "." +
+      (accs.length >= 3 && linked.length / accs.length >= 0.5 ? '<div style="color:var(--dim);font-size:13px;margin-top:6px">Strong pattern — overstimulation is driving accidents more than house-training. Earlier wind-downs on busy days should cut these.</div>' : "") +
+      (linked.length === 0 ? '<div style="color:var(--dim);font-size:13px;margin-top:6px">No link to logged 🌀/🚪 flags yet — tag those moments as they happen and patterns will show here.</div>' : "") +
+      "</div>";
+  }
   $main.innerHTML =
+    contextCard +
     '<div class="day-header">Accidents per day</div>' +
     '<div class="chart">' + rows.map(({ k, i }) =>
       '<div class="chart-col"><div class="chart-num" style="color:' + (i.accidents === 0 ? "var(--green)" : "var(--red2)") + '">' + i.accidents + '</div><div class="bar" style="height:' + (8 + (i.accidents / maxAcc) * 60) + "px;background:" + (i.accidents === 0 ? "#3a6b4f" : "#a5525e") + '"></div><div class="chart-lbl">' + shortDay(k) + "</div></div>"
