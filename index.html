@@ -407,6 +407,19 @@ function sleepForDay(k) {
   return total;
 }
 
+function avgAwakeMin7d() {
+  const weekAgo = Date.now() - 7 * 86400000;
+  const naps = live().filter(e => (e.type === "napStart" || e.type === "napEnd") && e.ts > weekAgo).sort((a, b) => a.ts - b.ts);
+  const windows = [];
+  let lastEnd = null;
+  naps.forEach(e => {
+    if (e.type === "napEnd") lastEnd = e.ts;
+    if (e.type === "napStart" && lastEnd) { windows.push(e.ts - lastEnd); lastEnd = null; }
+  });
+  if (windows.length < 4) return null; // not enough data to advise
+  return Math.round(windows.reduce((a, b) => a + b, 0) / windows.length / 60000);
+}
+
 function prettyDay(k) {
   const [y, m, d] = k.split("-").map(Number);
   const date = new Date(y, m - 1, d);
@@ -453,8 +466,8 @@ function toast(msg, undoId) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { slot.innerHTML = ""; }, undoId ? 5000 : 2400);
 }
-function undoEvent(id) {
-  deleteEvent(id);
+function undoEvent(ids) {
+  String(ids).split(",").forEach(id => deleteEvent(id));
   render();
   toast("↩️ Undone");
 }
@@ -477,6 +490,17 @@ function sheet(title, bodyHTML) {
     '<div class="sheet-backdrop" onclick="if(event.target===this)closeSheet()">' +
     '<div class="sheet"><div class="sheet-title">' + esc(title) + "</div>" + bodyHTML +
     '<button class="sheet-cancel" onclick="closeSheet()">Close</button></div></div>';
+}
+
+function logBothOutside() {
+  const now = Date.now();
+  const wee = { id: uid(), ts: now, mod: now, dev: deviceId, type: "wee", where: "outside" };
+  const poo = { id: uid(), ts: now + 1000, mod: now, dev: deviceId, type: "poo", where: "outside" };
+  events.push(wee, poo);
+  saveEvents();
+  render();
+  toast("💧💩 Wee + poo outside · " + fmtTime(now), wee.id + "," + poo.id);
+  scheduleSync();
 }
 
 function openMeal() {
@@ -548,6 +572,7 @@ function renderNow() {
     '<button class="big-btn good" onclick="addEvent({type:\'poo\',where:\'outside\'})"><span class="ico">💩</span>Poo outside</button>' +
     '<button class="big-btn bad" onclick="addEvent({type:\'poo\',where:\'inside\'})"><span class="ico">💩</span>Poo inside</button>' +
     "</div>" +
+    '<button class="big-btn good" style="width:100%;flex-direction:row;gap:10px;padding:13px 8px;margin-bottom:14px" onclick="logBothOutside()"><span style="font-size:20px">💧💩</span>Wee + poo outside</button> ' +
     '<div class="grid2">' +
     '<button class="big-btn" onclick="openMeal()"><span class="ico">🍚</span>Meal (' + foodToday + "/" + settings.foodTargetG + "g)</button>" +
     '<button class="big-btn" onclick="openFlags()"><span class="ico">🏷</span>Behaviour / event</button>' +
@@ -671,6 +696,15 @@ function renderSettings() {
   const syncColor = syncState.status === "ok" ? "var(--green)" : syncState.status === "error" ? "var(--red2)" : "var(--dim)";
   $main.innerHTML =
     stepperSetting("Awake window (mins)", "~45–60 at 8 weeks; grows as he does", "awakeWindowMin", 5, 20, 180) +
+    (function () {
+      const avg = avgAwakeMin7d();
+      if (avg === null) return "";
+      const rounded = Math.round(avg / 5) * 5;
+      const diff = rounded - settings.awakeWindowMin;
+      let inner = "📊 His real windows average <b>" + avg + " mins</b> over the last 7 days.";
+      if (Math.abs(diff) >= 10) inner += ' <button onclick="settings.awakeWindowMin=' + rounded + ';saveSettings();render()" style="background:#31406b;border:none;border-radius:10px;color:var(--ink);font-weight:600;padding:4px 12px;margin-left:6px;cursor:pointer">Set to ' + rounded + "</button>";
+      return '<div style="background:var(--panel);border:1px solid var(--panel-b);border-radius:14px;padding:12px 14px;margin:-4px 0 10px;font-size:13px;line-height:1.6;color:var(--dim)">' + inner + "</div>";
+    })() +
     stepperSetting("Wee reminder (mins)", "Highlight when it's been this long", "weeWarnMin", 5, 15, 240) +
     stepperSetting("Daily food target (g)", "Currently 150g/day", "foodTargetG", 10, 50, 500) +
     stepperSetting("Meal size (g)", "Quick-log portion", "mealSizeG", 5, 10, 200) +

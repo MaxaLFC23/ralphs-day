@@ -50,6 +50,36 @@ async function broadcast(body: string, tag: string) {
 
 Deno.serve(async (_req) => {
   const hour = ukHour();
+
+  // ---- weekly digest: Sunday 19:00–19:59 UK, once per week ----
+  const weekday = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short" }).format(new Date());
+  if (weekday === "Sun" && hour >= 19 && hour < 20) {
+    const state0 = await getState();
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());
+    if (state0.lastDigest !== today) {
+      const rows0 = await fetch(`${SUPABASE_URL}/rest/v1/ralph_events?select=payload&limit=5000`, { headers: H }).then((r) => r.json());
+      const evs = rows0.map((r: any) => r.payload).filter((p: any) => p && !p.deleted).sort((a: any, b: any) => a.ts - b.ts);
+      const now = Date.now();
+      const wk = (n: number) => evs.filter((e: any) => e.ts > now - n * 7 * 86400000 && e.ts <= now - (n - 1) * 7 * 86400000);
+      const thisWk = wk(1), lastWk = wk(2);
+      const accidents = (list: any[]) => list.filter((e) => (e.type === "wee" || e.type === "poo") && e.where === "inside").length;
+      const wees = thisWk.filter((e: any) => e.type === "wee");
+      const outPct = wees.length ? Math.round((wees.filter((e: any) => e.where === "outside").length / wees.length) * 100) : null;
+      // avg sleep/day this week
+      let sleepMs = 0, open: number | null = null;
+      thisWk.forEach((e: any) => {
+        if (e.type === "napStart" && open === null) open = e.ts;
+        if (e.type === "napEnd" && open !== null) { sleepMs += e.ts - open; open = null; }
+      });
+      const sleepH = (sleepMs / 7 / 3600000).toFixed(1);
+      const a1 = accidents(thisWk), a0 = accidents(lastWk);
+      const trend = a1 < a0 ? `⬇️ down from ${a0}` : a1 > a0 ? `⬆️ up from ${a0}` : `same as last week`;
+      await broadcast(`📊 Ralph's week: ${a1} accidents (${trend})${outPct !== null ? `, ${outPct}% of wees outside` : ""}, ~${sleepH}h logged sleep/day. Good lad. 🐾`, "ralph-digest");
+      state0.lastDigest = today;
+      await setState(state0);
+    }
+  }
+
   const quiet = QUIET_START > QUIET_END ? (hour >= QUIET_START || hour < QUIET_END) : (hour >= QUIET_START && hour < QUIET_END);
   if (quiet) return new Response("quiet hours");
 
