@@ -1,4 +1,4 @@
-const CACHE = "ralphs-day-v1";
+const CACHE = "ralphs-day-v2";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -24,5 +24,29 @@ self.addEventListener("fetch", (e) => {
         return res;
       })
       .catch(() => caches.match(e.request))
+  );
+});
+
+// Web Push
+self.addEventListener("push", (e) => {
+  let data = { title: "Ralph's Day", body: "Something happened 🐾" };
+  try { data = { ...data, ...e.data.json() }; } catch (err) {}
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: "./icon-192.png",
+      badge: "./icon-192.png",
+      tag: data.tag || "ralph",
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ("focus" in c) return c.focus(); }
+      return clients.openWindow("./");
+    })
   );
 });
