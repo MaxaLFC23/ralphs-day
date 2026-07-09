@@ -218,6 +218,17 @@ const SEED_RAW = [
   [8,"17:30","weeIn"],[8,"17:32","mealU"],[8,"17:47","weeOut"],
   [8,"18:04","flag","zoomies"],[8,"18:05","napStart"],[8,"19:12","napEnd"],
   [8,"19:13","weeOut"],[8,"20:05","napStart"],
+  // Wed evening + Thu morning, imported from the written log (9 July update).
+  // IMPORTANT: only ever APPEND to this array — ids are index-based, so inserting
+  // mid-array would shift ids and duplicate events on devices that already seeded.
+  [8,"21:08","napEnd"],[8,"21:09","weeOut"],[8,"21:10","pooOut"],
+  [8,"21:33","flag","zoomies"],[8,"21:34","weeOut"],
+  [8,"21:35","napStart"],
+  [9,"05:40","napEnd"],[9,"05:41","pooOut"],[9,"05:42","weeOut"],
+  [9,"05:58","pooOut"],[9,"05:59","weeOut"],
+  [9,"06:00","flag","training"],[9,"06:05","pooOut"],
+  [9,"06:39","flag","zoomies"],[9,"06:40","napStart"],
+  [9,"07:53","napEnd"],[9,"07:54","weeOut"],[9,"07:55","flag","training"],
 ];
 
 function buildSeed(mealG) {
@@ -578,7 +589,7 @@ function saveSync() {
 function reimportSeed() {
   const have = new Set(events.map(e => e.id));
   buildSeed(settings.mealSizeG).forEach(e => { if (!have.has(e.id)) events.push(e); });
-  saveEvents(); render(); toast("📥 First four days imported"); scheduleSync();
+  saveEvents(); render(); toast("📥 Written log imported"); scheduleSync();
 }
 
 function renderSettings() {
@@ -597,7 +608,7 @@ function renderSettings() {
     '<div class="sync-status" style="color:' + syncColor + '">' + (syncState.detail || (settings.supabaseUrl ? "Configured" : "Not configured — data stays on this phone")) + "</div>" +
     "</div>" +
     '<button class="sheet-btn" style="margin-top:8px" onclick="downloadCSV()">📤 Download all data (CSV)</button>' +
-    '<button class="sheet-btn" style="background:#252c40;border:1px solid var(--panel-b2)" onclick="reimportSeed()">📥 Re-import first four days</button>' +
+    '<button class="sheet-btn" style="background:#252c40;border:1px solid var(--panel-b2)" onclick="reimportSeed()">📥 Import written log (5–9 July)</button>' +
     '<div class="hint">Data is stored on this phone (and in Supabase if sync is on). The first four days (5–8 July) came from the written log — day one\'s toilet times are estimates.</div>';
 }
 
