@@ -404,13 +404,11 @@ function sleepIntervals() {
   return out;
 }
 function sleepForDay(k) {
-  const [y, m, d] = k.split("-").map(Number);
-  const start = new Date(y, m - 1, d).getTime();
-  const end = start + 86400000;
+  // A day's sleep = every sleep interval that STARTED that day, counted in full —
+  // so "Saturday" = Saturday's naps + all of Saturday night, even past midnight.
   let total = 0;
   for (const [a, b] of sleepIntervals()) {
-    const s = Math.max(a, start), e = Math.min(b, end);
-    if (e > s) total += e - s;
+    if (dayKey(a) === k) total += b - a;
   }
   return total;
 }
