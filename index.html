@@ -324,10 +324,18 @@ async function syncNow(quiet) {
   };
   if (!quiet) { syncState = { status: "working", detail: "Syncing…" }; renderIfSettings(); }
   try {
-    // pull
-    const res = await fetch(base + "/rest/v1/ralph_events?select=id,mod,payload", { headers });
-    if (!res.ok) throw new Error("pull " + res.status);
-    const remote = await res.json();
+    // pull — paginate in 1000-row pages (PostgREST caps each response at 1000)
+    let remote = [];
+    for (let page = 0; page < 50; page++) {
+      const from = page * 1000, to = from + 999;
+      const res = await fetch(base + "/rest/v1/ralph_events?select=id,mod,payload", {
+        headers: { ...headers, "Range-Unit": "items", Range: from + "-" + to },
+      });
+      if (!res.ok) throw new Error("pull " + res.status);
+      const chunk = await res.json();
+      remote = remote.concat(chunk);
+      if (chunk.length < 1000) break; // last page reached
+    }
     const remoteMap = new Map(remote.map(r => [r.id, r]));
     const localMap = new Map(events.map(e => [e.id, e]));
     let changedLocal = false;
@@ -343,8 +351,10 @@ async function syncNow(quiet) {
       const r = remoteMap.get(e.id);
       if (!r || (e.mod || 0) > (r.mod || 0)) toPush.push({ id: e.id, mod: e.mod || e.ts, payload: e });
     }
-    if (toPush.length) {
-      const res2 = await fetch(base + "/rest/v1/ralph_events", { method: "POST", headers, body: JSON.stringify(toPush) });
+    // push in batches of 500 (avoids payload limits once the table is large)
+    for (let i = 0; i < toPush.length; i += 500) {
+      const batch = toPush.slice(i, i + 500);
+      const res2 = await fetch(base + "/rest/v1/ralph_events", { method: "POST", headers, body: JSON.stringify(batch) });
       if (!res2.ok) throw new Error("push " + res2.status);
     }
     if (changedLocal) saveEvents();
